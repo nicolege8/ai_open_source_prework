@@ -1,0 +1,35 @@
+/* Reset margins and padding */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+/* Make body fill the entire viewport */
+html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden; /* Hide scrollbars to keep canvas filling window */
+    background-color: #000; /* Black background in case image doesn't load */
+}
+
+/* Canvas styling */
+#gameCanvas {
+    display: block;
+    position: absolute;
+    top: 0;
+    left: 0;
+    background-color: #1a1a1a; /* Darker background for better contrast */
+    image-rendering: auto; /* Smooth rendering for better UI */
+    cursor: crosshair; /* Show crosshair cursor to indicate clickable area */
+}
+
+/* Prevent text selection and context menu on canvas */
+#gameCanvas {
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+}

@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mini MMORPG</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    
+    <script>
+        // Game state
+        let gameState = {
+            playerId: null,
+            players: {},
+            avatars: {},
+            worldImage: null,
+            camera: { x: 0, y: 0 }
+        };
+        
+        // WebSocket connection
+        let socket = null;
+        
+        // Key state tracking
+        let keyState = {
+            up: false,
+            down: false,
+            left: false,
+            right: false
+        };
+        
+        // Movement system
+        let movementInterval = null;
+        const MOVEMENT_INTERVAL = 100; // Send move command every 100ms
+        
+        // Click-to-move system
+        let targetPosition = null;
+        let isMovingToTarget = false;
+        
+        // Get canvas and context
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // World map dimensions
+        const WORLD_SIZE = 2048;
+        
+        // Set canvas size to fill the browser window
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            updateCamera();
+            render();
+        }
+        
+        // Load the world map image
+        function loadWorldMap() {
+            return new Promise((resolve) => {
+                const worldImage = new Image();
+                worldImage.onload = function() {
+                    gameState.worldImage = worldImage;
+                    resolve();
+                };
+                worldImage.src = 'world.jpg';
+            });
+        }
+        
+        // Update camera position to center on player
+        function updateCamera() {
+            if (!gameState.playerId || !gameState.players[gameState.playerId]) {
+                return;
+            }
+            
+            const player = gameState.players[gameState.playerId];
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            
+            // Calculate camera position to center player on screen
+            let cameraX = player.x - centerX;
+            let cameraY = player.y - centerY;
+            
+            // Clamp camera to world bounds
+            cameraX = Math.max(0, Math.min(cameraX, WORLD_SIZE - canvas.width));
+            cameraY = Math.max(0, Math.min(cameraY, WORLD_SIZE - canvas.height));
+            
+            gameState.camera.x = cameraX;
+            gameState.camera.y = cameraY;
+        }
+        
+        // Convert world coordinates to screen coordinates
+        function worldToScreen(worldX, worldY) {
+            return {
+                x: worldX - gameState.camera.x,
+                y: worldY - gameState.camera.y
+            };
+        }
+        
+        // Convert screen coordinates to world coordinates
+        function screenToWorld(screenX, screenY) {
+            return {
+                x: screenX + gameState.camera.x,
+                y: screenY + gameState.camera.y
+            };
+        }
+        
+        // Render avatar with animation frame and direction
+        function renderAvatar(player) {
+            if (!player.avatar || !gameState.avatars[player.avatar]) {
+                return;
+            }
+            
+            const avatar = gameState.avatars[player.avatar];
+            const screenPos = worldToScreen(player.x, player.y);
+            
+            // Skip rendering if avatar is outside viewport
+            if (screenPos.x < -50 || screenPos.x > canvas.width + 50 || 
+                screenPos.y < -50 || screenPos.y > canvas.height + 50) {
+                return;
+            }
+            
+            // Get the appropriate frame based on direction and animation
+            let frames = avatar.frames[player.facing];
+            if (!frames && player.facing === 'west') {
+                // West direction uses flipped east frames
+                frames = avatar.frames.east;
+            }
+            
+            if (!frames || frames.length === 0) {
+                return;
+            }
+            
+            const frameIndex = Math.min(player.animationFrame || 0, frames.length - 1);
+            const frameData = frames[frameIndex];
+            
+            // Create image from base64 data
+            const img = new Image();
+            img.onload = function() {
+                // Calculate avatar size (maintain aspect ratio) - increased size
+                const maxSize = 64; // Increased from 32 to 64
+                const aspectRatio = img.width / img.height;
+                let width = maxSize;
+                let height = maxSize / aspectRatio;
+                
+                if (height > maxSize) {
+                    height = maxSize;
+                    width = maxSize * aspectRatio;
+                }
+                
+                // Center the avatar on the player position
+                const x = screenPos.x - width / 2;
+                const y = screenPos.y - height;
+                
+                // Save context state
+                ctx.save();
+                
+                // Enable smooth rendering for better quality
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = 'high';
+                
+                // Flip horizontally for west direction
+                if (player.facing === 'west') {
+                    ctx.scale(-1, 1);
+                    ctx.drawImage(img, -x - width, y, width, height);
+                } else {
+                    ctx.drawImage(img, x, y, width, height);
+                }
+                
+                // Restore context state
+                ctx.restore();
+                
+                // Draw username label with better positioning
+                drawUsernameLabel(player.username, screenPos.x, screenPos.y - height - 8);
+            };
+            img.src = frameData;
+        }
+        
+        // Draw username label above avatar
+        function drawUsernameLabel(username, x, y) {
+            ctx.save();
+            
+            // Set font and measure text
+            ctx.font = 'bold 14px Arial, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            
+            const textMetrics = ctx.measureText(username);
+            const textWidth = textMetrics.width;
+            const textHeight = 16;
+            const padding = 6;
+            
+            // Draw background rectangle
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(
+                x - textWidth/2 - padding, 
+                y - textHeight - padding, 
+                textWidth + padding * 2, 
+                textHeight + padding
+            );
+            
+            // Draw border
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(
+                x - textWidth/2 - padding, 
+                y - textHeight - padding, 
+                textWidth + padding * 2, 
+                textHeight + padding
+            );
+            
+            // Draw text
+            ctx.fillStyle = '#ffffff';
+            ctx.fillText(username, x, y);
+            
+            ctx.restore();
+        }
+        
+        // Send movement command to server
+        function sendMoveCommand(direction) {
+            if (socket && socket.readyState === WebSocket.OPEN && gameState.playerId) {
+                const moveMessage = {
+                    action: 'move',
+                    direction: direction
+                };
+                socket.send(JSON.stringify(moveMessage));
+                console.log('Sent move command:', direction);
+            }
+        }
+        
+        // Send stop command to server
+        function sendStopCommand() {
+            if (socket && socket.readyState === WebSocket.OPEN && gameState.playerId) {
+                const stopMessage = {
+                    action: 'stop'
+                };
+                socket.send(JSON.stringify(stopMessage));
+                console.log('Sent stop command');
+            }
+        }
+        
+        // Start continuous movement
+        function startMovement() {
+            if (movementInterval) {
+                return; // Already moving
+            }
+            
+            movementInterval = setInterval(() => {
+                // Check which keys are currently pressed
+                const activeKeys = [];
+                if (keyState.up) activeKeys.push('up');
+                if (keyState.down) activeKeys.push('down');
+                if (keyState.left) activeKeys.push('left');
+                if (keyState.right) activeKeys.push('right');
+                
+                if (activeKeys.length > 0) {
+                    // Send move command for the first active direction
+                    // (Server will handle the movement, we just need to keep sending)
+                    sendMoveCommand(activeKeys[0]);
+                } else {
+                    // No keys pressed, stop movement
+                    stopMovement();
+                }
+            }, MOVEMENT_INTERVAL);
+        }
+        
+        // Stop continuous movement
+        function stopMovement() {
+            if (movementInterval) {
+                clearInterval(movementInterval);
+                movementInterval = null;
+                sendStopCommand();
+            }
+        }
+        
+        // Handle click-to-move
+        function handleCanvasClick(event) {
+            const rect = canvas.getBoundingClientRect();
+            const clickX = event.clientX - rect.left;
+            const clickY = event.clientY - rect.top;
+            
+            // Convert screen coordinates to world coordinates
+            const worldPos = screenToWorld(clickX, clickY);
+            
+            // Clamp to world bounds
+            worldPos.x = Math.max(0, Math.min(worldPos.x, WORLD_SIZE));
+            worldPos.y = Math.max(0, Math.min(worldPos.y, WORLD_SIZE));
+            
+            // Set target position
+            targetPosition = worldPos;
+            isMovingToTarget = true;
+            
+            // Send click-to-move command to server
+            if (socket && socket.readyState === WebSocket.OPEN && gameState.playerId) {
+                const moveMessage = {
+                    action: 'move',
+                    x: Math.round(worldPos.x),
+                    y: Math.round(worldPos.y)
+                };
+                socket.send(JSON.stringify(moveMessage));
+                console.log('Sent click-to-move command:', moveMessage);
+            }
+        }
+        
+        // Draw UI overlay
+        function drawUI() {
+            ctx.save();
+            
+            // Connection status
+            const isConnected = socket && socket.readyState === WebSocket.OPEN;
+            const statusText = isConnected ? 'Connected' : 'Disconnected';
+            const statusColor = isConnected ? '#4CAF50' : '#F44336';
+            
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+            ctx.fillRect(10, 10, 120, 30);
+            ctx.strokeStyle = statusColor;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(10, 10, 120, 30);
+            
+            ctx.fillStyle = statusColor;
+            ctx.font = 'bold 12px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText(`Status: ${statusText}`, 20, 30);
+            
+            // Player count
+            const playerCount = Object.keys(gameState.players).length;
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+            ctx.fillRect(10, 50, 120, 30);
+            ctx.strokeStyle = '#2196F3';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(10, 50, 120, 30);
+            
+            ctx.fillStyle = '#2196F3';
+            ctx.fillText(`Players: ${playerCount}`, 20, 70);
+            
+            // Instructions
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+            ctx.fillRect(10, canvas.height - 80, 200, 70);
+            ctx.strokeStyle = '#FF9800';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(10, canvas.height - 80, 200, 70);
+            
+            ctx.fillStyle = '#FF9800';
+            ctx.font = 'bold 12px Arial';
+            ctx.fillText('Controls:', 20, canvas.height - 60);
+            ctx.font = '10px Arial';
+            ctx.fillText('Arrow Keys - Move', 20, canvas.height - 45);
+            ctx.fillText('Click - Move to location', 20, canvas.height - 30);
+            ctx.fillText('Hold keys for continuous movement', 20, canvas.height - 15);
+            
+            // Draw target indicator if moving to target
+            if (targetPosition && isMovingToTarget) {
+                const targetScreen = worldToScreen(targetPosition.x, targetPosition.y);
+                if (targetScreen.x >= 0 && targetScreen.x <= canvas.width && 
+                    targetScreen.y >= 0 && targetScreen.y <= canvas.height) {
+                    
+                    ctx.strokeStyle = '#ffff00';
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.arc(targetScreen.x, targetScreen.y, 20, 0, Math.PI * 2);
+                    ctx.stroke();
+                    
+                    // Inner circle
+                    ctx.strokeStyle = '#ffff00';
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    ctx.arc(targetScreen.x, targetScreen.y, 10, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+            }
+            
+            ctx.restore();
+        }
+        
+        // Main render function
+        function render() {
+            if (!gameState.worldImage) {
+                return;
+            }
+            
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw world map with camera offset
+            ctx.drawImage(
+                gameState.worldImage,
+                gameState.camera.x, gameState.camera.y, canvas.width, canvas.height,
+                0, 0, canvas.width, canvas.height
+            );
+            
+            // Draw all players
+            Object.values(gameState.players).forEach(player => {
+                renderAvatar(player);
+            });
+            
+            // Draw UI overlay
+            drawUI();
+        }
+        
+        // WebSocket message handlers
+        function handleJoinGame(data) {
+            if (data.success) {
+                gameState.playerId = data.playerId;
+                gameState.players = data.players;
+                gameState.avatars = data.avatars;
+                
+                console.log('Joined game successfully!', {
+                    playerId: gameState.playerId,
+                    playerCount: Object.keys(gameState.players).length
+                });
+                
+                updateCamera();
+                render();
+            } else {
+                console.error('Failed to join game:', data.error);
+            }
+        }
+        
+        function handlePlayerJoined(data) {
+            gameState.players[data.player.id] = data.player;
+            gameState.avatars[data.avatar.name] = data.avatar;
+            render();
+        }
+        
+        function handlePlayersMoved(data) {
+            Object.assign(gameState.players, data.players);
+            updateCamera();
+            render();
+        }
+        
+        function handlePlayerLeft(data) {
+            delete gameState.players[data.playerId];
+            render();
+        }
+        
+        // WebSocket connection and message handling
+        function connectToServer() {
+            socket = new WebSocket('wss://codepath-mmorg.onrender.com');
+            
+            socket.onopen = function() {
+                console.log('Connected to game server');
+                
+                // Send join game message
+                const joinMessage = {
+                    action: 'join_game',
+                    username: 'Nicole'
+                };
+                socket.send(JSON.stringify(joinMessage));
+            };
+            
+            socket.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    console.log('Received message:', data);
+                    
+                    switch (data.action) {
+                        case 'join_game':
+                            handleJoinGame(data);
+                            break;
+                        case 'player_joined':
+                            handlePlayerJoined(data);
+                            break;
+                        case 'players_moved':
+                            handlePlayersMoved(data);
+                            break;
+                        case 'player_left':
+                            handlePlayerLeft(data);
+                            break;
+                        default:
+                            console.log('Unknown action:', data.action);
+                    }
+                } catch (error) {
+                    console.error('Error parsing message:', error);
+                }
+            };
+            
+            socket.onclose = function() {
+                console.log('Disconnected from game server');
+                stopMovement(); // Stop movement when disconnected
+            };
+            
+            socket.onerror = function(error) {
+                console.error('WebSocket error:', error);
+            };
+        }
+        
+        // Keyboard event handlers
+        function handleKeyDown(event) {
+            // Prevent default behavior for arrow keys
+            if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) {
+                event.preventDefault();
+            }
+            
+            let keyName = null;
+            
+            switch (event.code) {
+                case 'ArrowUp':
+                    keyName = 'up';
+                    break;
+                case 'ArrowDown':
+                    keyName = 'down';
+                    break;
+                case 'ArrowLeft':
+                    keyName = 'left';
+                    break;
+                case 'ArrowRight':
+                    keyName = 'right';
+                    break;
+            }
+            
+            // Set key state and start movement if not already moving
+            if (keyName && !keyState[keyName]) {
+                keyState[keyName] = true;
+                // Clear click-to-move target when using keyboard
+                targetPosition = null;
+                isMovingToTarget = false;
+                startMovement();
+            }
+        }
+        
+        function handleKeyUp(event) {
+            let keyName = null;
+            
+            switch (event.code) {
+                case 'ArrowUp':
+                    keyName = 'up';
+                    break;
+                case 'ArrowDown':
+                    keyName = 'down';
+                    break;
+                case 'ArrowLeft':
+                    keyName = 'left';
+                    break;
+                case 'ArrowRight':
+                    keyName = 'right';
+                    break;
+            }
+            
+            // Clear key state when key is released
+            if (keyName && keyState[keyName]) {
+                keyState[keyName] = false;
+                // Movement will automatically stop if no keys are pressed
+            }
+        }
+        
+        // Initialize the game
+        async function initGame() {
+            await loadWorldMap();
+            resizeCanvas();
+            connectToServer();
+            
+            // Add keyboard event listeners
+            document.addEventListener('keydown', handleKeyDown);
+            document.addEventListener('keyup', handleKeyUp);
+            
+            // Add click event listener for click-to-move
+            canvas.addEventListener('click', handleCanvasClick);
+        }
+        
+        // Cleanup function
+        function cleanup() {
+            stopMovement();
+            if (socket) {
+                socket.close();
+            }
+        }
+        
+        // Event listeners
+        window.addEventListener('load', initGame);
+        window.addEventListener('resize', resizeCanvas);
+        window.addEventListener('beforeunload', cleanup);
+    </script>
+</body>
+</html>
