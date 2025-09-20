@@ -9,6 +9,29 @@
 <body>
     <canvas id="gameCanvas"></canvas>
     
+    <!-- Username input dialog -->
+    <div id="usernameDialog" class="dialog-overlay">
+        <div class="dialog-content">
+            <h2>Join the Game</h2>
+            <p>Enter your username to join the multiplayer world:</p>
+            <input type="text" id="usernameInput" placeholder="Enter username..." maxlength="20">
+            
+            <div class="avatar-section">
+                <h3>Avatar (Optional)</h3>
+                <p class="avatar-help">Upload 3 frames for each direction (north, south, east). West will be auto-flipped from east.</p>
+                <div class="avatar-upload">
+                    <input type="file" id="avatarUpload" accept="image/*" multiple>
+                    <label for="avatarUpload" class="upload-button">Choose Avatar Images</label>
+                    <div id="avatarPreview" class="avatar-preview"></div>
+                </div>
+            </div>
+            
+            <div class="dialog-buttons">
+                <button id="joinButton">Join Game</button>
+            </div>
+        </div>
+    </div>
+    
     <script>
         // Game state
         let gameState = {
@@ -16,7 +39,8 @@
             players: {},
             avatars: {},
             worldImage: null,
-            camera: { x: 0, y: 0 }
+            camera: { x: 0, y: 0 },
+            username: null
         };
         
         // WebSocket connection
@@ -106,6 +130,8 @@
         // Render avatar with animation frame and direction
         function renderAvatar(player) {
             if (!player.avatar || !gameState.avatars[player.avatar]) {
+                // Draw a simple colored circle as fallback
+                drawFallbackAvatar(player);
                 return;
             }
             
@@ -120,23 +146,29 @@
             
             // Get the appropriate frame based on direction and animation
             let frames = avatar.frames[player.facing];
+            let shouldFlip = false;
+            
             if (!frames && player.facing === 'west') {
-                // West direction uses flipped east frames
+                // West direction uses flipped east frames as per README
                 frames = avatar.frames.east;
+                shouldFlip = true;
             }
             
             if (!frames || frames.length === 0) {
+                // Draw fallback avatar if no frames available
+                drawFallbackAvatar(player);
                 return;
             }
             
-            const frameIndex = Math.min(player.animationFrame || 0, frames.length - 1);
+            // Use animationFrame (0-2) to select correct avatar frame as per README
+            const frameIndex = Math.min(Math.max(player.animationFrame || 0, 0), frames.length - 1);
             const frameData = frames[frameIndex];
             
             // Create image from base64 data
             const img = new Image();
             img.onload = function() {
-                // Calculate avatar size (maintain aspect ratio) - increased size
-                const maxSize = 64; // Increased from 32 to 64
+                // Calculate avatar size (maintain aspect ratio)
+                const maxSize = 64;
                 const aspectRatio = img.width / img.height;
                 let width = maxSize;
                 let height = maxSize / aspectRatio;
@@ -157,8 +189,8 @@
                 ctx.imageSmoothingEnabled = true;
                 ctx.imageSmoothingQuality = 'high';
                 
-                // Flip horizontally for west direction
-                if (player.facing === 'west') {
+                // Flip horizontally for west direction as per README
+                if (shouldFlip) {
                     ctx.scale(-1, 1);
                     ctx.drawImage(img, -x - width, y, width, height);
                 } else {
@@ -171,7 +203,59 @@
                 // Draw username label with better positioning
                 drawUsernameLabel(player.username, screenPos.x, screenPos.y - height - 8);
             };
+            img.onerror = function() {
+                // If image fails to load, draw fallback avatar
+                drawFallbackAvatar(player);
+            };
             img.src = frameData;
+        }
+        
+        // Draw fallback avatar when no avatar data is available
+        function drawFallbackAvatar(player) {
+            const screenPos = worldToScreen(player.x, player.y);
+            
+            // Skip rendering if avatar is outside viewport
+            if (screenPos.x < -50 || screenPos.x > canvas.width + 50 || 
+                screenPos.y < -50 || screenPos.y > canvas.height + 50) {
+                return;
+            }
+            
+            ctx.save();
+            
+            // Draw a simple colored circle based on player ID
+            const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8'];
+            const colorIndex = player.id ? player.id.charCodeAt(0) % colors.length : 0;
+            const color = colors[colorIndex];
+            
+            // Draw body
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.arc(screenPos.x, screenPos.y - 20, 20, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Draw head
+            ctx.fillStyle = '#FFDBAC';
+            ctx.beginPath();
+            ctx.arc(screenPos.x, screenPos.y - 40, 12, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Draw direction indicator
+            ctx.fillStyle = '#333';
+            const directionOffset = {
+                'north': { x: 0, y: -8 },
+                'south': { x: 0, y: 8 },
+                'east': { x: 8, y: 0 },
+                'west': { x: -8, y: 0 }
+            };
+            const offset = directionOffset[player.facing] || { x: 0, y: 8 };
+            ctx.beginPath();
+            ctx.arc(screenPos.x + offset.x, screenPos.y - 20 + offset.y, 4, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.restore();
+            
+            // Draw username label
+            drawUsernameLabel(player.username, screenPos.x, screenPos.y - 50);
         }
         
         // Draw username label above avatar
@@ -438,11 +522,17 @@
             socket.onopen = function() {
                 console.log('Connected to game server');
                 
-                // Send join game message
+                // Send join game message with username and optional avatar
                 const joinMessage = {
                     action: 'join_game',
-                    username: 'Nicole'
+                    username: gameState.username
                 };
+                
+                // Add avatar if uploaded
+                if (uploadedAvatar) {
+                    joinMessage.avatar = uploadedAvatar;
+                }
+                
                 socket.send(JSON.stringify(joinMessage));
             };
             
@@ -450,6 +540,13 @@
                 try {
                     const data = JSON.parse(event.data);
                     console.log('Received message:', data);
+                    
+                    // Check for error responses first
+                    if (data.success === false) {
+                        console.error(`Error in ${data.action}:`, data.error);
+                        showErrorMessage(data.error);
+                        return;
+                    }
                     
                     switch (data.action) {
                         case 'join_game':
@@ -469,6 +566,7 @@
                     }
                 } catch (error) {
                     console.error('Error parsing message:', error);
+                    showErrorMessage('Invalid message format received from server');
                 }
             };
             
@@ -541,11 +639,138 @@
             }
         }
         
+        // Show error message to user
+        function showErrorMessage(message) {
+            // Create a temporary error display
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error-message';
+            errorDiv.textContent = message;
+            errorDiv.style.cssText = `
+                position: fixed;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                background: rgba(244, 67, 54, 0.9);
+                color: white;
+                padding: 20px;
+                border-radius: 8px;
+                font-family: Arial, sans-serif;
+                font-size: 16px;
+                z-index: 1000;
+                max-width: 400px;
+                text-align: center;
+            `;
+            
+            document.body.appendChild(errorDiv);
+            
+            // Remove after 5 seconds
+            setTimeout(() => {
+                if (errorDiv.parentNode) {
+                    errorDiv.parentNode.removeChild(errorDiv);
+                }
+            }, 5000);
+        }
+        
+        // Avatar upload state
+        let uploadedAvatar = null;
+        
+        // Handle username dialog
+        function showUsernameDialog() {
+            const dialog = document.getElementById('usernameDialog');
+            const usernameInput = document.getElementById('usernameInput');
+            const joinButton = document.getElementById('joinButton');
+            const avatarUpload = document.getElementById('avatarUpload');
+            const avatarPreview = document.getElementById('avatarPreview');
+            
+            dialog.style.display = 'flex';
+            usernameInput.focus();
+            
+            // Handle avatar upload
+            avatarUpload.onchange = function(event) {
+                const files = Array.from(event.target.files);
+                if (files.length > 0) {
+                    processAvatarUpload(files, avatarPreview);
+                }
+            };
+            
+            // Handle join button click
+            joinButton.onclick = function() {
+                const username = usernameInput.value.trim();
+                if (username.length > 0) {
+                    gameState.username = username;
+                    dialog.style.display = 'none';
+                    connectToServer();
+                } else {
+                    alert('Please enter a username');
+                }
+            };
+            
+            // Handle Enter key
+            usernameInput.onkeypress = function(event) {
+                if (event.key === 'Enter') {
+                    joinButton.click();
+                }
+            };
+        }
+        
+        // Process uploaded avatar images
+        function processAvatarUpload(files, previewContainer) {
+            if (files.length < 3) {
+                alert('Please upload at least 3 images for avatar animation');
+                return;
+            }
+            
+            // Clear previous preview
+            previewContainer.innerHTML = '';
+            
+            // Process files and create base64 data
+            const processedFiles = [];
+            let processedCount = 0;
+            
+            files.forEach((file, index) => {
+                if (file.type.startsWith('image/')) {
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        processedFiles[index] = e.target.result;
+                        processedCount++;
+                        
+                        // Create preview
+                        const img = document.createElement('img');
+                        img.src = e.target.result;
+                        img.style.cssText = 'width: 40px; height: 40px; margin: 2px; border: 1px solid #555;';
+                        previewContainer.appendChild(img);
+                        
+                        // When all files are processed, create avatar object
+                        if (processedCount === files.length) {
+                            createAvatarObject(processedFiles);
+                        }
+                    };
+                    reader.readAsDataURL(file);
+                }
+            });
+        }
+        
+        // Create avatar object from processed images
+        function createAvatarObject(imageData) {
+            // For simplicity, we'll use the same frames for all directions
+            // In a real implementation, you'd want to organize them by direction
+            uploadedAvatar = {
+                name: 'custom_avatar',
+                frames: {
+                    north: imageData.slice(0, 3), // First 3 images for north
+                    south: imageData.slice(0, 3), // Same for south (you could organize differently)
+                    east: imageData.slice(0, 3)   // Same for east
+                }
+            };
+            
+            console.log('Avatar processed:', uploadedAvatar);
+        }
+        
         // Initialize the game
         async function initGame() {
             await loadWorldMap();
             resizeCanvas();
-            connectToServer();
+            showUsernameDialog();
             
             // Add keyboard event listeners
             document.addEventListener('keydown', handleKeyDown);

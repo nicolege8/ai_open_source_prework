@@ -33,3 +33,147 @@ html, body {
     -webkit-touch-callout: none;
     -webkit-tap-highlight-color: transparent;
 }
+
+/* Username dialog styling */
+.dialog-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.8);
+    display: none;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+
+.dialog-content {
+    background: #2a2a2a;
+    padding: 30px;
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    text-align: center;
+    min-width: 300px;
+    border: 2px solid #444;
+}
+
+.dialog-content h2 {
+    color: #ffffff;
+    margin-bottom: 15px;
+    font-family: Arial, sans-serif;
+    font-size: 24px;
+}
+
+.dialog-content p {
+    color: #cccccc;
+    margin-bottom: 20px;
+    font-family: Arial, sans-serif;
+    font-size: 14px;
+}
+
+#usernameInput {
+    width: 100%;
+    padding: 12px;
+    font-size: 16px;
+    border: 2px solid #555;
+    border-radius: 6px;
+    background: #1a1a1a;
+    color: #ffffff;
+    margin-bottom: 20px;
+    box-sizing: border-box;
+    font-family: Arial, sans-serif;
+}
+
+#usernameInput:focus {
+    outline: none;
+    border-color: #4CAF50;
+    box-shadow: 0 0 8px rgba(76, 175, 80, 0.3);
+}
+
+.dialog-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+}
+
+#joinButton {
+    background: #4CAF50;
+    color: white;
+    border: none;
+    padding: 12px 24px;
+    font-size: 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: Arial, sans-serif;
+    font-weight: bold;
+    transition: background-color 0.3s;
+}
+
+#joinButton:hover {
+    background: #45a049;
+}
+
+#joinButton:active {
+    background: #3d8b40;
+}
+
+/* Avatar upload section */
+.avatar-section {
+    margin: 20px 0;
+    padding: 15px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    border: 1px solid #444;
+}
+
+.avatar-section h3 {
+    color: #ffffff;
+    margin-bottom: 8px;
+    font-family: Arial, sans-serif;
+    font-size: 16px;
+}
+
+.avatar-help {
+    color: #aaaaaa;
+    font-size: 12px;
+    margin-bottom: 15px;
+    font-style: italic;
+}
+
+.avatar-upload {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+#avatarUpload {
+    display: none;
+}
+
+.upload-button {
+    background: #2196F3;
+    color: white;
+    padding: 10px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: Arial, sans-serif;
+    font-size: 14px;
+    transition: background-color 0.3s;
+    border: none;
+    display: inline-block;
+}
+
+.upload-button:hover {
+    background: #1976D2;
+}
+
+.avatar-preview {
+    margin-top: 10px;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 5px;
+    max-height: 100px;
+    overflow-y: auto;
+}
